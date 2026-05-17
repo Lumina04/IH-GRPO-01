@@ -1,0 +1,131 @@
+hydra:
+  searchpath:
+    - file://verl/trainer/config
+
+defaults:
+  - ppo_trainer
+  - _self_
+
+data:
+  val_sample_size: null
+  apply_chat_template: True
+  filter_overlong_prompts: True
+  max_start_length: 4096
+  max_obs_length: 256
+  prompt: |
+    Solve the following problem in a step-by-step manner, presenting the final solution enclosed within \boxed{}. You may employ Python code to augment your reasoning process. \no_think 
+
+    Guidelines: 
+    1. Treat this interaction as a Jupyter notebook where variables persist across blocks. For better planning, you are encouraged to spread your code across multiple steps (e.g., solve each substep in a separate block) and use code to replace complex calculations and reasoning. All code should be enclosed within ```python``` blocks.
+
+    2. By default, when you write a ```python``` code block, it is executed in a delay manner, because some values are intermediate variables and do not need to be known immediately for subsequent reasoning, and therefore do not require print output. If you need to execute a block immediately, append `<tool_call>` right after the code block. In that case, all previously unexecuted code blocks will be concatenated into a complete script and return the terminal output.
+
+    3. You are encouraged to use delay execution (code blocks without the `<tool_call>` tag) whenever possible. This helps simplify complex computations or reasoning processes, improves accuracy, and does not hinder reasoning efficiency. For intermediate variables, you can continue reasoning using their variable names without needing their exact values.
+
+    4. Minimize the number of immediate executions, as they can slow down reasoning. For intermediate variables that do not affect your reasoning, do not use the `<tool_call>` tag. Only add `<tool_call>` after a code block when you must know its execution result immediately—such as at final answer nodes. But remember: if you must need the output, you must include the tag; otherwise, the code will remain unexecuted.
+
+    5. You need to use `print()` to output results. Do not fabricate the outputs of code yourself. Avoid creating adjacent code blocks that could be combined; merge them instead. Do not write duplicate code.
+
+    Example Question:
+      Calculate the sum of the squares of the two smallest odd numbers in the list `[10, 4, 7, 1, 3, 5, 8]`.
+
+      Step 1:
+      First, we need to filter out the even numbers to focus only on the odd ones.
+      ```python
+      # Step 1: Filter for odd numbers
+      numbers = [10, 4, 7, 1, 3, 5, 8]
+      odd_numbers = [num for num in numbers if num % 2 != 0]
+      ```
+      (`odd_num` is an intermediate variable, and its execution can be delayed.)
+      
+      Step 2:
+      Next, we sort the filtered list to easily access the smallest numbers.
+      ```python
+      # Step 2: Sort the odd numbers
+      sorted_odds = sorted(odd_numbers)
+      ```
+      (`sorted_odds` is an intermediate variable, and its execution can be delayed.)
+
+      Step 3:
+      Finally, we take the first two elements from the sorted list, square them, and compute the sum.
+      ```python
+      # Step 3: Compute sum of squares of the two smallest odds
+      # Smallest are at index 0 and 1
+      result = sorted_odds[0]**2 + sorted_odds[1]**2
+      print(result)
+      ```<tool_call>
+      Code execution result: 10
+      </tool_call>
+
+      Final Answer: \boxed{10}
+
+    User Question:
+    
+actor_rollout_ref:
+  actor:
+    optim:
+      lr: 1e-6
+    use_dynamic_bsz: True
+    use_kl_loss: False
+    kl_loss_coef: 0.0
+    kl_loss_type: low_var_kl
+    entropy_coeff: 0.0
+    clip_ratio_high: 0.28
+    clip_ratio_low: 0.2
+    clip_ratio_c: 3.0
+    mask_tool_output: True
+    mask_void_turns: True
+    add_c_loss: False
+    tool_call_id: 151657
+  model:
+    use_remove_padding: True
+  rollout:
+    temperature: 1.0
+    min_p: 0.0
+    swap_space: 40
+    model_path: ${actor_rollout_ref.model.path}
+    disable_log_stats: False
+    enforce_eager: False
+    free_cache_engine: False
+    n: 8
+    min_n: 4 # at least 4 responses should be valid for each prompt, otherwise we will skip it. Invalid ones include those which are over long.
+    val_kwargs:
+      # sampling parameters for validation
+      top_k: -1 # 0 for hf rollout, -1 for vllm rollout
+      top_p: 0.7
+      temperature: 1.0
+      n: 4
+      do_sample: True # default eager for validation
+      k: ${actor_rollout_ref.rollout.val_kwargs.n} # pass@k, 1 <= k_val <= actor_rollout_ref.rollout.n_val, default actor_rollout_ref.rollout.n_val
+    ref:
+      fsdp_config:
+        param_offload: True
+
+trainer:
+  rejection_sample: True
+  oversample_multiplier: 2.0 # Multiple the training batch size by this factor to account for rejection sampling reduction.
+  remove_clip: False # remove overlong response if True
+  acc_filter: False # if True, only keep prompts with avg acc ratio in thresholds
+  acc_filter_high: 1
+  acc_filter_low: 0
+  start_clip_step: 50
+  critic_warmup: 0
+  logger: ['console','tensorboard']
+  resume_mode: auto # or disable or resume_path if resume_from_path is set
+  resume_from_path: null
+  rollout_data_dir: null
+
+critic:
+  ppo_micro_batch_size_per_gpu: 4
+
+reward_model:
+  reward_manager: math
+
+algorithm:
+  use_kl_in_reward: False
+  kl_ctrl:
+    kl_coef: 0.0
+
+agent:
+  tool_use: True
+  max_turns: 5
